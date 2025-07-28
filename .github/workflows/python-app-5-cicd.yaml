@@ -1,0 +1,103 @@
+name: python-app-5-cicd
+
+on:
+  push:
+    paths:
+      - 'src/**'
+    branches:
+      - main
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    outputs:
+      commit_id : ${{ env.COMMIT_ID }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Shorten commit id
+        shell: bash
+        run: |
+          echo "COMMIT_ID=${GITHUB_SHA::6}" >> "$GITHUB_ENV"
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: rushkaventervector/python-app-5:${{ env.COMMIT_ID }}
+  cd:
+    runs-on: self-hosted
+    needs: ci
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Modify values file
+        shell: bash
+        run: |
+          echo ${{ needs.ci.outputs.commit_id }}
+          pip install yq
+          yq -Yi '.image.tag = "${{ needs.ci.outputs.commit_id }}"' charts/python-app-5/values-dev.yaml
+
+      - name: Commit changes
+        uses: EndBug/add-and-commit@v9
+        with:
+          message: "Updates values.yaml with ${{ needs.ci.outputs.commit_id }}"
+
+      - name: Install ArgoCD CLI
+        shell: bash
+        run: |
+          curl -ksSL -o argocd https://argocd-server.argocd/download/argocd-linux-amd64
+          chmod +x argocd
+          sudo mv ./argocd /usr/local/bin/argocd
+
+      - name: Login to ArgoCD
+        shell: bash
+        run: |
+          argocd login argocd-server.argocd \
+          --insecure \
+          --grpc-web \
+          --username admin \
+          --password ${{ secrets.ARGOCD_PASSWORD }}
+      
+      - name: Ensure ArgoCD repo and app
+        shell: bash
+        run: |
+          repo=https://github.com/rushka-venter-org/python-app-5.git
+
+          argocd repo list \
+          | grep -q $repo \
+          || argocd repo add \
+          $repo
+
+          argocd app get \
+          | grep -q python-app-5 \
+          || argocd app create python-app-5 \
+          --repo $repo \
+          --path charts/python-app-5 \
+          --dest-server https://kubernetes.default.svc \
+          --dest-namespace dev \
+          --values values-dev.yaml \
+          --revision main \
+          --sync-policy manual \
+          --sync-option CreateNamespace=true
+
+      - name: Debug ArgoCD permissions
+        shell: bash
+        run: |
+          argocd app list
+          argocd cluster list
+          argocd repo list
+          argocd account get-user-info
+
+      - name: Argocd app sync
+        shell: bash
+        run: |
+          argocd app sync python-app-5

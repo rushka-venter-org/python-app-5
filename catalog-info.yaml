@@ -1,0 +1,13 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: python-app-5
+  description: Python app that displays the time, named python-app-5.
+  # Example for optional annotations
+  annotations:
+    github.com/project-slug: rushka-venter-org/python-app-5
+    backstage.io/techdocs-ref: dir:..
+spec:
+  type: service
+  owner: development
+  lifecycle: experimental
